@@ -2095,7 +2095,7 @@ class Mob {
         }
 
         this.animTime += dt * 3;
-        this.updateAI(dt, playerPos);
+        this.lastAIResult = this.updateAI(dt, playerPos);
 
         this.velocity.y += GRAVITY * dt;
 
@@ -2196,13 +2196,10 @@ class ZombieMob extends Mob {
     }
 
     buildModel() {
-        const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-        const headMat = new THREE.MeshLambertMaterial({ color: 0x4a7a3a });
-        this.head = new THREE.Mesh(headGeo, headMat);
+        this.head = this.createBoxMesh(0.5, 0.5, 0.5, 0x4a7a3a);
         this.head.position.y = 1.6;
         this.group.add(this.head);
 
-        const bodyMat = new THREE.MeshLambertMaterial({ color: 0x2a6a5a });
         this.body = this.createBoxMesh(0.5, 0.7, 0.3, 0x2a6a5a);
         this.body.position.y = 1.05;
         this.group.add(this.body);
@@ -2336,7 +2333,6 @@ class CreeperMob extends Mob {
             this.legs.push(leg);
         }
 
-        const face = new THREE.Group();
         const eye1 = this.createBoxMesh(0.08, 0.08, 0.02, 0x000000);
         eye1.position.set(-0.1, 1.4, 0.26);
         this.group.add(eye1);
@@ -2583,14 +2579,14 @@ class MobManager {
                 continue;
             }
 
-            const action = mob.update(dt, playerPos);
-            if (action === true) {
+            const shouldRemove = mob.update(dt, playerPos);
+            if (shouldRemove === true) {
                 this.scene.remove(mob.group);
                 this.mobs.splice(i, 1);
                 continue;
             }
 
-            const aiResult = mob.updateAI(dt, playerPos);
+            const aiResult = mob.lastAIResult;
             if (aiResult === 'attack') {
                 player.takeDamage(mob.attackDamage);
             }
@@ -3345,17 +3341,25 @@ class Game {
         document.getElementById('loading-bar-inner').style.width = '30%';
         await this.sleep(50);
 
-        const spawnHeight = this.world.getTerrainHeight(8, 8) + 3;
+        let spawnX = 8, spawnZ = 8;
+        for (let tries = 0; tries < 20; tries++) {
+            const biome = this.world.getBiome(spawnX, spawnZ);
+            if (biome === BiomeType.PLAINS || biome === BiomeType.DESERT) break;
+            spawnX += 16; spawnZ += 8;
+        }
+        const spawnHeight = this.world.getTerrainHeight(spawnX, spawnZ) + 3;
         this.player = new Player(this.camera, this.world);
-        this.player.position.y = spawnHeight;
+        this.player.position.set(spawnX, spawnHeight, spawnZ);
 
         document.getElementById('loading-text').textContent = 'Loading chunks...';
         document.getElementById('loading-bar-inner').style.width = '50%';
         await this.sleep(50);
 
+        const pcx = Math.floor(spawnX / CHUNK_SIZE);
+        const pcz = Math.floor(spawnZ / CHUNK_SIZE);
         for (let dx = -3; dx <= 3; dx++) {
             for (let dz = -3; dz <= 3; dz++) {
-                this.world.ensureChunk(dx, dz);
+                this.world.ensureChunk(pcx + dx, pcz + dz);
             }
         }
 
@@ -3431,6 +3435,7 @@ class Game {
         });
 
         document.addEventListener('mousedown', (e) => {
+            if (!this.player) return;
             if (this.ui?.inventoryOpen) return;
             if (!document.pointerLockElement) return;
             this.player.mouseButtons[e.button] = true;
@@ -3440,6 +3445,7 @@ class Game {
         });
 
         document.addEventListener('mouseup', (e) => {
+            if (!this.player) return;
             this.player.mouseButtons[e.button] = false;
             if (e.button === 0) {
                 this.player.breakProgress = 0;
@@ -3506,7 +3512,7 @@ class Game {
         });
 
         document.addEventListener('wheel', (e) => {
-            if (!this.player) return;
+            if (!this.player || this.paused) return;
             if (e.deltaY > 0) {
                 this.player.selectedSlot = (this.player.selectedSlot + 1) % 9;
             } else {
