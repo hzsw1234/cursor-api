@@ -3549,9 +3549,9 @@
         };
 
         const occlusion = (wx, wy, wz, nx, ny, nz) => {
-          const side1 = this.world.isOpaque(wx + ny, wy + nz, wz + nx) ? 1 : 0;
-          const side2 = this.world.isOpaque(wx - ny, wy - nz, wz - nx) ? 1 : 0;
-          const corner = this.world.isOpaque(wx + nx, wy + ny, wz + nz) ? 1 : 0;
+          const side1 = this.world.peekOpaque(wx + ny, wy + nz, wz + nx) ? 1 : 0;
+          const side2 = this.world.peekOpaque(wx - ny, wy - nz, wz - nx) ? 1 : 0;
+          const corner = this.world.peekOpaque(wx + nx, wy + ny, wz + nz) ? 1 : 0;
           return 1 - (side1 + side2 + corner) * 0.08;
         };
 
@@ -3611,7 +3611,7 @@
                 const nx = face.dir[0];
                 const ny = face.dir[1];
                 const nz = face.dir[2];
-                const neighborId = this.world.getBlock(wx + nx, y + ny, wz + nz);
+                const neighborId = this.world.peekBlock(wx + nx, y + ny, wz + nz);
                 const neighbor = BLOCK_BY_ID[neighborId] || BLOCK_BY_ID[0];
                 const shouldRender = block.key === "glass"
                   ? (!neighbor.collidable || neighbor.key !== block.key)
@@ -3794,6 +3794,18 @@
         return this.chunks.get(`${cx},${cz}`) || null;
       }
 
+      peekBlock(x, y, z) {
+        if (y < 0 || y >= WORLD_HEIGHT) {
+          return BLOCK_AIR;
+        }
+        const { cx, cz, lx, lz } = this.localCoords(x, y, z);
+        const chunk = this.getChunk(cx, cz);
+        if (!chunk) {
+          return BLOCK_AIR;
+        }
+        return chunk.get(lx, y, lz);
+      }
+
       getBlock(x, y, z) {
         if (y < 0 || y >= WORLD_HEIGHT) {
           return BLOCK_AIR;
@@ -3823,6 +3835,11 @@
 
       isOpaque(x, y, z) {
         const block = BLOCK_BY_ID[this.getBlock(x, y, z)] || BLOCK_BY_ID[0];
+        return block.opaque;
+      }
+
+      peekOpaque(x, y, z) {
+        const block = BLOCK_BY_ID[this.peekBlock(x, y, z)] || BLOCK_BY_ID[0];
         return block.opaque;
       }
 
