@@ -3855,6 +3855,25 @@
         return chunk.getBiome(lx, lz);
       }
 
+      peekColumnHeight(x, z) {
+        const { cx, cz, lx, lz } = this.localCoords(x, 0, z);
+        const chunk = this.getChunk(cx, cz);
+        if (chunk) {
+          return chunk.getHeight(lx, lz);
+        }
+        const biome = this.generator.biomeAt(x, z);
+        return this.generator.terrainHeight(x, z, biome);
+      }
+
+      peekBiomeAt(x, z) {
+        const { cx, cz, lx, lz } = this.localCoords(x, 0, z);
+        const chunk = this.getChunk(cx, cz);
+        if (chunk) {
+          return chunk.getBiome(lx, lz);
+        }
+        return this.generator.biomeAt(x, z);
+      }
+
       surfaceY(x, z) {
         for (let y = WORLD_HEIGHT - 2; y >= 0; y -= 1) {
           const blockId = this.getBlock(x, y, z);
@@ -4485,20 +4504,26 @@
         this.game = game;
         this.canvas = canvas;
         this.ctx = canvas.getContext("2d");
+        this.cooldown = 0;
       }
 
-      update() {
+      update(dt = 0) {
+        this.cooldown -= dt;
+        if (this.cooldown > 0) {
+          return;
+        }
+        this.cooldown = 0.35;
         const size = this.canvas.width;
         const radius = 22;
         const player = this.game.player.position;
         this.ctx.clearRect(0, 0, size, size);
         const image = this.ctx.createImageData(size, size);
-        for (let py = 0; py < size; py += 1) {
-          for (let px = 0; px < size; px += 1) {
-            const sx = Math.floor(player.x + (px - size * 0.5) / 4);
-            const sz = Math.floor(player.z + (py - size * 0.5) / 4);
-            const biome = this.game.world.biomeAt(sx, sz);
-            const height = this.game.world.columnHeight(sx, sz);
+        for (let py = 0; py < size; py += 2) {
+          for (let px = 0; px < size; px += 2) {
+            const sx = Math.floor(player.x + (px - size * 0.5) / 5);
+            const sz = Math.floor(player.z + (py - size * 0.5) / 5);
+            const biome = this.game.world.peekBiomeAt(sx, sz);
+            const height = this.game.world.peekColumnHeight(sx, sz);
             let color = [74, 132, 74];
             if (height <= SEA_LEVEL) {
               color = [74, 124, 194];
@@ -4512,11 +4537,18 @@
               color = [96, 164, 92];
             }
             const shade = clamp((height - 20) / 60, 0.6, 1.2);
-            const idx = (px + py * size) * 4;
-            image.data[idx + 0] = Math.floor(color[0] * shade);
-            image.data[idx + 1] = Math.floor(color[1] * shade);
-            image.data[idx + 2] = Math.floor(color[2] * shade);
-            image.data[idx + 3] = 255;
+            const r = Math.floor(color[0] * shade);
+            const g = Math.floor(color[1] * shade);
+            const b = Math.floor(color[2] * shade);
+            for (let oy = 0; oy < 2; oy += 1) {
+              for (let ox = 0; ox < 2; ox += 1) {
+                const idx = ((px + ox) + (py + oy) * size) * 4;
+                image.data[idx + 0] = r;
+                image.data[idx + 1] = g;
+                image.data[idx + 2] = b;
+                image.data[idx + 3] = 255;
+              }
+            }
           }
         }
         this.ctx.putImageData(image, 0, 0);
@@ -5297,7 +5329,7 @@
         this.unlockAchievement("first_steps");
         this.updateLoading(82, "Sharpening the interface...");
         this.ui.update();
-        this.minimap.update();
+        this.minimap.update(0.35);
 
         this.bindUI();
         this.updateLoading(100, "World ready. Click to capture the mouse and play.");
@@ -5491,7 +5523,7 @@
 
         this.toast.update(dt);
         this.ui.update();
-        this.minimap.update();
+        this.minimap.update(dt);
         this.renderer.render(this.scene, this.camera);
       }
 
