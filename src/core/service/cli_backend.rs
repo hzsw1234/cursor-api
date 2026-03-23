@@ -138,6 +138,9 @@ struct CliChoice {
 struct CliResponseMessage {
     role: &'static str,
     content: String,
+    /// Thinking/reasoning content (OpenAI o1/o3 compatible format)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -169,6 +172,9 @@ struct CliStreamDelta {
     role: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
+    /// Thinking/reasoning content (OpenAI o1/o3 compatible format)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -211,7 +217,13 @@ fn build_prompt(messages: &[CliMessage]) -> String {
 // CLI execution
 // ============================================================
 
-async fn run_cli_sync(model: &str, prompt: &str) -> Result<String, String> {
+struct CliSyncResult {
+    content: String,
+    thinking: Option<String>,
+    usage: CliUsageInfo,
+}
+
+async fn run_cli_sync(model: &str, prompt: &str) -> Result<CliSyncResult, String> {
     let cfg = config();
     let agent_bin = cfg.agent_bin.to_string();
     let workspace = cfg.workspace.to_string();
@@ -222,7 +234,8 @@ async fn run_cli_sync(model: &str, prompt: &str) -> Result<String, String> {
     let result = tokio::time::timeout(
         std::time::Duration::from_millis(timeout_ms),
         tokio::task::spawn_blocking(move || {
-            let output = Command::new(&agent_bin)
+            // Use stream-json format to capture thinking content
+            let child = Command::new(&agent_bin)
                 .arg("--print")
                 .arg("--mode")
                 .arg("ask")
@@ -231,23 +244,58 @@ async fn run_cli_sync(model: &str, prompt: &str) -> Result<String, String> {
                 .arg("--workspace")
                 .arg(&workspace)
                 .arg("--trust")
+                .arg("--stream-partial-output")
                 .arg("--output-format")
-                .arg("text")
+                .arg("stream-json")
                 .arg(&prompt)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
-                .output()
+                .spawn()
                 .map_err(|e| format!("Failed to execute agent CLI: {e}"))?;
 
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(format!(
-                    "agent CLI exited with code {}: {stderr}",
-                    output.status.code().unwrap_or(-1)
-                ));
+            let stdout = child.stdout.ok_or("Failed to capture stdout")?;
+            let reader = BufReader::new(stdout);
+            let mut parser = StreamParser::new();
+            let mut thinking_parts = Vec::new();
+            let mut content_parts = Vec::new();
+            let mut usage = CliUsageInfo::default();
+
+            for line in reader.lines() {
+                let line = match line {
+                    Ok(l) => l,
+                    Err(_) => break,
+                };
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                match parser.parse_line(trimmed) {
+                    Some(StreamParseResult::ThinkingDelta(text)) => {
+                        thinking_parts.push(text);
+                    }
+                    Some(StreamParseResult::ContentDelta(text)) => {
+                        content_parts.push(text);
+                    }
+                    Some(StreamParseResult::Done(u)) => {
+                        usage = u;
+                        break;
+                    }
+                    _ => {}
+                }
             }
 
-            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            let thinking = if thinking_parts.is_empty() {
+                None
+            } else {
+                Some(thinking_parts.join(""))
+            };
+
+            Ok(CliSyncResult {
+                content: content_parts.join(""),
+                thinking,
+                usage,
+            })
         }),
     )
     .await
@@ -257,82 +305,118 @@ async fn run_cli_sync(model: &str, prompt: &str) -> Result<String, String> {
     result
 }
 
-/// CLI 流式输出解析器（去重逻辑）
+/// CLI 流式输出解析器
+///
+/// CLI stream-json 格式:
+/// - `{"type":"thinking","subtype":"delta","text":"..."}` — 思考增量(每条是独立delta)
+/// - `{"type":"thinking","subtype":"completed"}` — 思考完成
+/// - `{"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}}` — 回答增量(每条独立delta)
+/// - 最后一条 assistant 是完整累积文本(需要跳过)
+/// - `{"type":"result","subtype":"success","usage":{...}}` — 结束
 struct StreamParser {
-    accumulated: String,
+    /// 已输出的 assistant 文本总长度(用于去重最后一条累积消息)
+    assistant_len: usize,
+    /// thinking 阶段是否完成
+    thinking_done: bool,
+}
+
+/// 解析 CLI stream-json 中的 usage 信息
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct CliUsageInfo {
+    #[serde(default)]
+    input_tokens: u32,
+    #[serde(default)]
+    output_tokens: u32,
+    #[serde(default)]
+    cache_read_tokens: u32,
+    #[serde(default)]
+    cache_write_tokens: u32,
 }
 
 impl StreamParser {
     fn new() -> Self {
         Self {
-            accumulated: String::new(),
+            assistant_len: 0,
+            thinking_done: false,
         }
     }
 
-    /// 解析一行 CLI 输出，返回增量文本（如果有）
+    /// 解析一行 CLI 输出
     fn parse_line(&mut self, line: &str) -> Option<StreamParseResult> {
-        #[derive(Deserialize)]
-        struct CliStreamLine {
-            r#type: Option<String>,
-            subtype: Option<String>,
-            message: Option<CliStreamMessage>,
-        }
-        #[derive(Deserialize)]
-        struct CliStreamMessage {
-            content: Option<Vec<CliStreamContent>>,
-        }
-        #[derive(Deserialize)]
-        struct CliStreamContent {
-            r#type: Option<String>,
-            text: Option<String>,
-        }
+        // 使用 serde_json::Value 灵活解析
+        let obj: serde_json::Value = serde_json::from_str(line).ok()?;
+        let line_type = obj.get("type")?.as_str()?;
+        let subtype = obj.get("subtype").and_then(|v| v.as_str());
 
-        let obj: CliStreamLine = serde_json::from_str(line).ok()?;
-
-        // Check for done signal
-        if obj.r#type.as_deref() == Some("result") && obj.subtype.as_deref() == Some("success") {
-            return Some(StreamParseResult::Done);
-        }
-
-        if obj.r#type.as_deref() != Some("assistant") {
-            return None;
-        }
-
-        let content = obj.message?.content?;
-        let text: String = content
-            .iter()
-            .filter(|p| p.r#type.as_deref() == Some("text"))
-            .filter_map(|p| p.text.as_deref())
-            .collect::<Vec<_>>()
-            .join("");
-
-        if text.is_empty() {
-            return None;
-        }
-
-        // Deduplication: CLI sends accumulated text, we need only the delta
-        if text == self.accumulated {
-            return None;
-        }
-
-        if text.starts_with(&self.accumulated) && !self.accumulated.is_empty() {
-            let delta = text[self.accumulated.len()..].to_string();
-            self.accumulated = text;
-            if delta.is_empty() {
-                return None;
+        match line_type {
+            // === Thinking delta ===
+            "thinking" if subtype == Some("delta") => {
+                let text = obj.get("text")?.as_str()?;
+                if text.is_empty() {
+                    return None;
+                }
+                Some(StreamParseResult::ThinkingDelta(text.to_string()))
             }
-            return Some(StreamParseResult::Delta(delta));
-        }
 
-        // New text that doesn't extend accumulated — just emit it
-        self.accumulated.push_str(&text);
-        Some(StreamParseResult::Delta(text))
+            // === Thinking completed ===
+            "thinking" if subtype == Some("completed") => {
+                self.thinking_done = true;
+                Some(StreamParseResult::ThinkingDone)
+            }
+
+            // === Assistant content delta ===
+            "assistant" => {
+                let content = obj.get("message")?.get("content")?.as_array()?;
+                let text: String = content
+                    .iter()
+                    .filter(|p| p.get("type").and_then(|t| t.as_str()) == Some("text"))
+                    .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("");
+
+                if text.is_empty() {
+                    return None;
+                }
+
+                // 最后一条 assistant 消息是完整累积文本，需要跳过
+                // 判断: 如果这条消息的长度 >= 之前所有 delta 的累积长度，它就是累积消息
+                if text.len() >= self.assistant_len && self.assistant_len > 0 {
+                    // 可能是累积消息。检查长度是否远大于单个 delta
+                    // CLI 的 delta 通常很短(几个词)，累积消息包含全部文本
+                    if text.len() > 100 && text.len() as f64 > self.assistant_len as f64 * 0.8 {
+                        // 跳过累积消息
+                        return None;
+                    }
+                }
+
+                self.assistant_len += text.len();
+                Some(StreamParseResult::ContentDelta(text))
+            }
+
+            // === Result (done) ===
+            "result" if subtype == Some("success") => {
+                let usage = obj
+                    .get("usage")
+                    .and_then(|u| serde_json::from_value::<CliUsageInfo>(u.clone()).ok())
+                    .unwrap_or_default();
+                Some(StreamParseResult::Done(usage))
+            }
+
+            _ => None,
+        }
     }
 }
 
 enum StreamParseResult {
-    Delta(String),
-    Done,
+    /// Thinking content delta (from thinking models)
+    ThinkingDelta(String),
+    /// Thinking phase completed
+    ThinkingDone,
+    /// Assistant content delta
+    ContentDelta(String),
+    /// Stream completed with usage info
+    Done(CliUsageInfo),
 }
 
 // ============================================================
@@ -379,7 +463,7 @@ pub async fn handle_cli_chat_completions(
 
 async fn handle_sync(model: &str, prompt: &str) -> Response<Body> {
     match run_cli_sync(model, prompt).await {
-        Ok(content) => {
+        Ok(result) => {
             let id = format!(
                 "chatcmpl-cli-{}",
                 uuid::Uuid::new_v4().as_simple()
@@ -393,14 +477,15 @@ async fn handle_sync(model: &str, prompt: &str) -> Response<Body> {
                     index: 0,
                     message: CliResponseMessage {
                         role: "assistant",
-                        content,
+                        content: result.content,
+                        reasoning_content: result.thinking,
                     },
                     finish_reason: "stop",
                 }],
                 usage: CliUsage {
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    total_tokens: 0,
+                    prompt_tokens: result.usage.input_tokens,
+                    completion_tokens: result.usage.output_tokens,
+                    total_tokens: result.usage.input_tokens + result.usage.output_tokens,
                 },
             };
 
@@ -468,6 +553,16 @@ async fn handle_stream(model: &str, prompt: &str) -> Response<Body> {
         let reader = BufReader::new(stdout);
         let mut parser = StreamParser::new();
 
+        // Helper: send a chunk, return false if client disconnected
+        let send = |tx: &tokio::sync::mpsc::Sender<Result<Bytes, core::convert::Infallible>>,
+                    chunk: &CliStreamChunk| -> bool {
+            tx.blocking_send(Ok(Bytes::from(format!(
+                "data: {}\n\n",
+                __unwrap!(serde_json::to_string(chunk))
+            ))))
+            .is_ok()
+        };
+
         // Send initial role chunk
         let initial = CliStreamChunk {
             id: id.clone(),
@@ -479,14 +574,14 @@ async fn handle_stream(model: &str, prompt: &str) -> Response<Body> {
                 delta: CliStreamDelta {
                     role: Some("assistant"),
                     content: None,
+                    reasoning_content: None,
                 },
                 finish_reason: None,
             }],
         };
-        let _ = tx.blocking_send(Ok(Bytes::from(format!(
-            "data: {}\n\n",
-            __unwrap!(serde_json::to_string(&initial))
-        ))));
+        if !send(&tx, &initial) {
+            return;
+        }
 
         for line in reader.lines() {
             let line = match line {
@@ -499,7 +594,33 @@ async fn handle_stream(model: &str, prompt: &str) -> Response<Body> {
             }
 
             match parser.parse_line(trimmed) {
-                Some(StreamParseResult::Delta(text)) => {
+                // Thinking delta → reasoning_content field
+                Some(StreamParseResult::ThinkingDelta(text)) => {
+                    let chunk = CliStreamChunk {
+                        id: id.clone(),
+                        object: "chat.completion.chunk",
+                        created,
+                        model: model_owned.clone(),
+                        choices: vec![CliStreamChoice {
+                            index: 0,
+                            delta: CliStreamDelta {
+                                role: None,
+                                content: None,
+                                reasoning_content: Some(text),
+                            },
+                            finish_reason: None,
+                        }],
+                    };
+                    if !send(&tx, &chunk) {
+                        break;
+                    }
+                }
+
+                // Thinking done → no special chunk needed, just continue
+                Some(StreamParseResult::ThinkingDone) => {}
+
+                // Content delta → content field
+                Some(StreamParseResult::ContentDelta(text)) => {
                     let chunk = CliStreamChunk {
                         id: id.clone(),
                         object: "chat.completion.chunk",
@@ -510,23 +631,21 @@ async fn handle_stream(model: &str, prompt: &str) -> Response<Body> {
                             delta: CliStreamDelta {
                                 role: None,
                                 content: Some(text),
+                                reasoning_content: None,
                             },
                             finish_reason: None,
                         }],
                     };
-                    if tx
-                        .blocking_send(Ok(Bytes::from(format!(
-                            "data: {}\n\n",
-                            __unwrap!(serde_json::to_string(&chunk))
-                        ))))
-                        .is_err()
-                    {
-                        break; // Client disconnected
+                    if !send(&tx, &chunk) {
+                        break;
                     }
                 }
-                Some(StreamParseResult::Done) => {
+
+                // Done → send finish chunk
+                Some(StreamParseResult::Done(_usage)) => {
                     break;
                 }
+
                 None => {}
             }
         }
@@ -542,6 +661,7 @@ async fn handle_stream(model: &str, prompt: &str) -> Response<Body> {
                 delta: CliStreamDelta {
                     role: None,
                     content: None,
+                    reasoning_content: None,
                 },
                 finish_reason: Some("stop"),
             }],
