@@ -21,7 +21,7 @@ impl Version {
 }
 
 impl Default for Version {
-    fn default() -> Self { Self { major: 2, minor: 0, patch: 0 } }
+    fn default() -> Self { Self { major: 2, minor: 6, patch: 0 } }
 }
 
 impl<'de> serde::Deserialize<'de> for Version {

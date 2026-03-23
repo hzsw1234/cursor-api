@@ -55,4 +55,4 @@ raw_model_fetch_mode = "truncate"
 emulated_platform = "{DEFAULT_PLATFORM}"
 
 # Cursor客户端版本
-cursor_client_version = "2.0.0"
+cursor_client_version = "2.6.0"
