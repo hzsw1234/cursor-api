@@ -1412,7 +1412,7 @@
       <div id="footerHint">tab: inventory | esc: pause | f3: debug</div>
     </div>
 
-    <div id="loadingOverlay">
+    <div id="loadingOverlay" class="hidden">
       <div class="panel pixel-panel loadingCard">
         <h2>Generating the wilderness</h2>
         <p>Breathing life into a voxel valley with rivers, forests, deserts, caves, creatures, and a tiny survival loop.</p>
@@ -3698,11 +3698,10 @@
         let chunk = this.chunks.get(key);
         if (!chunk) {
           chunk = new Chunk(this, cx, cz);
-          this.generator.generateChunk(chunk);
-          this.applyChunkChanges(chunk);
-          this.remeshChunk(chunk);
           this.chunks.set(key, chunk);
           this.root.add(chunk.group);
+          this.generator.generateChunk(chunk);
+          this.applyChunkChanges(chunk);
         }
         return chunk;
       }
@@ -3722,6 +3721,11 @@
         for (let dz = -this.viewDistance; dz <= this.viewDistance; dz += 1) {
           for (let dx = -this.viewDistance; dx <= this.viewDistance; dx += 1) {
             this.ensureChunk(pcx + dx, pcz + dz);
+          }
+        }
+        for (const chunk of this.chunks.values()) {
+          if (chunk.needsRemesh) {
+            this.remeshChunk(chunk);
           }
         }
         for (const chunk of this.chunks.values()) {
