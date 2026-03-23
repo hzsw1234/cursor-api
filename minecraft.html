@@ -2480,10 +2480,10 @@ class SheepMob extends Mob {
         this.hostile = false;
         this.speed = 1.4;
         this.health = 8;
-        this.woolColor = [0xeeeeee, 0xdddddd, 0xcccccc, 0x888888][Math.floor(Math.random()*4)];
     }
 
     buildModel() {
+        this.woolColor = [0xeeeeee, 0xdddddd, 0xcccccc, 0x888888][Math.floor(Math.random()*4)];
         this.head = this.createBoxMesh(0.35, 0.35, 0.3, 0xddd0c0);
         this.head.position.set(0, 0.85, 0.45);
         this.group.add(this.head);
