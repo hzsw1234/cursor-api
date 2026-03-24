@@ -73,28 +73,28 @@ impl PlatformType {
 }
 
 /// User-Agent 后缀
-pub const UA_SUFFIX: &'static str = " Chrome/138.0.7204.251 Electron/37.7.0 Safari/537.36";
+pub const UA_SUFFIX: &'static str = " Chrome/140.0.7339.41 Electron/38.0.0 Safari/537.36";
 
-// const UA_SUFFIX_LEN: usize = " Chrome/138.0.7204.251 Electron/37.7.0 Safari/537.36".len();
+// const UA_SUFFIX_LEN: usize = " Chrome/140.0.7339.41 Electron/38.0.0 Safari/537.36".len();
 
 static PLATFORMS: Platforms = Platforms {
     windows: Platform {
-        web_ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+        web_ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
         string: "\"Windows\"",
         ua_prefix: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/",
-        // default_ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/2.0.0 Chrome/138.0.7204.251 Electron/37.7.0 Safari/537.36",
+        // default_ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/2.6.0 Chrome/140.0.7339.41 Electron/38.0.0 Safari/537.36",
     },
     macos: Platform {
-        web_ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+        web_ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
         string: "\"macOS\"",
         ua_prefix: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/",
-        // default_ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/2.0.0 Chrome/138.0.7204.251 Electron/37.7.0 Safari/537.36",
+        // default_ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/2.6.0 Chrome/140.0.7339.41 Electron/38.0.0 Safari/537.36",
     },
     linux: Platform {
-        web_ua: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+        web_ua: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
         string: "\"Linux\"",
         ua_prefix: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/",
-        // default_ua: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/2.0.0 Chrome/138.0.7204.251 Electron/37.7.0 Safari/537.36",
+        // default_ua: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/2.6.0 Chrome/140.0.7339.41 Electron/38.0.0 Safari/537.36",
     },
 };
 

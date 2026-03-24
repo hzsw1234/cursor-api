@@ -4,7 +4,8 @@ pub use json::{InfallibleSerialize, InfallibleJson, GenericJson, OpenAiJson, Ant
 
 use super::{
     constant::{
-        ROUTE_BUILD_KEY_PATH, ROUTE_CHAT_COMPLETIONS_PATH, ROUTE_CONFIG_EXAMPLE_PATH,
+        ROUTE_BUILD_KEY_PATH, ROUTE_CHAT_COMPLETIONS_PATH, ROUTE_CLI_CHAT_COMPLETIONS_PATH,
+        ROUTE_CONFIG_EXAMPLE_PATH,
         ROUTE_CONFIG_GET_PATH, ROUTE_CONFIG_RELOAD_PATH, ROUTE_CONFIG_SET_PATH,
         ROUTE_CONFIG_VERSION_GET_PATH, ROUTE_CPP_CONFIG_PATH, ROUTE_CPP_MODELS_PATH,
         ROUTE_CPP_STREAM_PATH, ROUTE_ENV_EXAMPLE_PATH, ROUTE_FILE_SYNC_PATH,
@@ -41,6 +42,7 @@ use crate::{
             handle_update_tokens_config_version, handle_update_tokens_profile,
         },
         service::{
+            cli_backend::handle_cli_chat_completions,
             cpp::{
                 handle_cpp_config, handle_cpp_models, handle_stream_cpp, handle_sync_file,
                 handle_upload_file,
@@ -140,6 +142,11 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             exchange_map.resolve(ROUTE_CHAT_COMPLETIONS_PATH),
             post(handle_chat_completions)
                 .route_layer(middleware::from_fn_with_state(state.clone(), v1_auth_middleware)),
+        )
+        .route(
+            exchange_map.resolve(ROUTE_CLI_CHAT_COMPLETIONS_PATH),
+            post(handle_cli_chat_completions)
+                .route_layer(middleware::from_fn(admin_auth_middleware)),
         )
         .route(
             exchange_map.resolve(ROUTE_MESSAGES_COUNT_TOKENS_PATH),

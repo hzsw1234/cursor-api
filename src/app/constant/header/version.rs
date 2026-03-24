@@ -18,11 +18,11 @@ use manually_init::ManuallyInit;
 crate::define_typed_constants! {
     &'static str => {
         /// 默认的客户端版本号
-        DEFAULT_CLIENT_VERSION = "2.0.0",
+        DEFAULT_CLIENT_VERSION = "2.6.0",
         /// 环境变量名：Cursor 客户端版本
         ENV_CURSOR_CLIENT_VERSION = "CURSOR_CLIENT_VERSION",
         /// Chrome 版本信息
-        CHROME_VERSION_INFO = " Chrome/138.0.7204.251 Electron/37.7.0 Safari/537.36",
+        CHROME_VERSION_INFO = " Chrome/140.0.7339.41 Electron/38.0.0 Safari/537.36",
         /// User-Agent 前缀
         UA_PREFIX = cfg_select! {
             target_os = "windows" => {"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/"}
@@ -31,9 +31,9 @@ crate::define_typed_constants! {
         },
         /// 默认的 User-Agent
         DEFAULT_UA = cfg_select! {
-            target_os = "windows" => {"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/2.0.0 Chrome/138.0.7204.251 Electron/37.7.0 Safari/537.36"}
-            target_os = "macos" => {"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/2.0.0 Chrome/138.0.7204.251 Electron/37.7.0 Safari/537.36"}
-            target_os = "linux" => {"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/2.0.0 Chrome/138.0.7204.251 Electron/37.7.0 Safari/537.36"}
+            target_os = "windows" => {"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/2.6.0 Chrome/140.0.7339.41 Electron/38.0.0 Safari/537.36"}
+            target_os = "macos" => {"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/2.6.0 Chrome/140.0.7339.41 Electron/38.0.0 Safari/537.36"}
+            target_os = "linux" => {"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/2.6.0 Chrome/140.0.7339.41 Electron/38.0.0 Safari/537.36"}
         },
     }
 

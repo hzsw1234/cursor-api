@@ -160,6 +160,7 @@ def_pub_const!(
     ROUTE_RAW_MODELS_PATH = "/raw/models",
     ROUTE_MODELS_PATH = "/v1/models",
     ROUTE_CHAT_COMPLETIONS_PATH = "/v1/chat/completions",
+    ROUTE_CLI_CHAT_COMPLETIONS_PATH = "/cli/chat/completions",
     ROUTE_MESSAGES_PATH = "/v1/messages",
     ROUTE_MESSAGES_COUNT_TOKENS_PATH = "/v1/messages/count_tokens",
 );

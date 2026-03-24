@@ -1,5 +1,6 @@
 // mod backend;
 // mod context;
+pub mod cli_backend;
 pub mod cpp;
 
 use crate::{

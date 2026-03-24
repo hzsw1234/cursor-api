@@ -82,6 +82,7 @@ impl AppConfig {
             super::context_fill_mode::init();
         }
         crate::core::constant::create_models();
+        crate::core::service::cli_backend::init();
 
         let (content, config) = if let Ok(s) = std::fs::read_to_string(&*CONFIG_FILE_PATH) {
             match toml::from_str(&s) {
