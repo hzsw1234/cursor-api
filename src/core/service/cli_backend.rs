@@ -327,11 +327,11 @@ async fn run_cli_sync(model: &str, prompt: &str) -> Result<CliSyncResult, String
 /// - `{"type":"thinking","subtype":"delta","text":"..."}` — 思考增量(每条是独立delta)
 /// - `{"type":"thinking","subtype":"completed"}` — 思考完成
 /// - `{"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}}` — 回答增量(每条独立delta)
-/// - 最后一条 assistant 是完整累积文本(需要跳过)
+/// - 每段 assistant 回答后会有一条累积文本消息(需要跳过)
 /// - `{"type":"result","subtype":"success","usage":{...}}` — 结束
 struct StreamParser {
-    /// 已输出的 assistant 文本总长度(用于去重最后一条累积消息)
-    assistant_len: usize,
+    /// 已输出的 assistant 文本(用于去重累积消息)
+    accumulated_text: String,
     /// thinking 阶段是否完成
     thinking_done: bool,
 }
@@ -353,7 +353,7 @@ struct CliUsageInfo {
 impl StreamParser {
     fn new() -> Self {
         Self {
-            assistant_len: 0,
+            accumulated_text: String::new(),
             thinking_done: false,
         }
     }
@@ -401,8 +401,9 @@ impl StreamParser {
 
                 // Only emit on "completed" to avoid duplicates (started + completed both have content)
                 if subtype == Some("completed") {
+                    // Reset accumulated text for the next assistant segment
+                    self.accumulated_text.clear();
                     let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                    self.assistant_len += content.len();
                     Some(StreamParseResult::FileContent {
                         path: path.to_string(),
                         content: content.to_string(),
@@ -413,6 +414,12 @@ impl StreamParser {
             }
 
             // === Assistant content delta ===
+            // CLI pattern per segment (before/after each tool_call):
+            //   delta (has timestamp_ms, short text) × N
+            //   accumulated message (same text concatenated, may or may not have timestamp_ms)
+            //
+            // We track segment_text to detect accumulated messages:
+            // if current text == segment_text, it's accumulated → skip.
             "assistant" => {
                 let content = obj.get("message")?.get("content")?.as_array()?;
                 let text: String = content
@@ -426,14 +433,23 @@ impl StreamParser {
                     return None;
                 }
 
-                // 最后一条 assistant 消息是完整累积文本，需要跳过
-                if text.len() >= self.assistant_len && self.assistant_len > 0 {
-                    if text.len() > 100 && text.len() as f64 > self.assistant_len as f64 * 0.8 {
-                        return None;
-                    }
+                // If this text equals what we've accumulated in this segment → accumulated msg, skip
+                if text == self.accumulated_text {
+                    // Reset for next segment (after tool_call)
+                    self.accumulated_text.clear();
+                    return None;
                 }
 
-                self.assistant_len += text.len();
+                // If accumulated text is a prefix of this text, it's a growing accumulated → skip
+                if !self.accumulated_text.is_empty()
+                    && text.starts_with(&self.accumulated_text)
+                    && text.len() > self.accumulated_text.len()
+                {
+                    self.accumulated_text = text;
+                    return None;
+                }
+
+                self.accumulated_text.push_str(&text);
                 Some(StreamParseResult::ContentDelta(text))
             }
 
