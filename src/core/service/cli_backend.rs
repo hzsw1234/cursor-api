@@ -38,6 +38,9 @@ pub struct CliConfig {
     pub agent_bin: Cow<'static, str>,
     pub timeout_ms: u64,
     pub workspace: Cow<'static, str>,
+    /// 是否使用 --mode ask（安全但可能导致 thinking 模型写文件而非输出文本）
+    /// 设为 false 时不传 --mode，agent 有完整 tool access
+    pub use_ask_mode: bool,
 }
 
 impl CliConfig {
@@ -48,6 +51,7 @@ impl CliConfig {
             agent_bin: parse_from_env("CLI_AGENT_BIN", "agent"),
             timeout_ms: parse_from_env("CLI_TIMEOUT_MS", 300_000u64),
             workspace: parse_from_env("CLI_WORKSPACE", "/tmp"),
+            use_ask_mode: parse_from_env("CLI_USE_ASK_MODE", false),
         }
     }
 }
@@ -223,11 +227,27 @@ struct CliSyncResult {
     usage: CliUsageInfo,
 }
 
+/// 构建 agent CLI 命令的公共参数
+fn build_agent_command(agent_bin: &str, model: &str, workspace: &str, use_ask_mode: bool) -> Command {
+    let mut cmd = Command::new(agent_bin);
+    cmd.arg("--print");
+    if use_ask_mode {
+        cmd.arg("--mode").arg("ask");
+    }
+    cmd.arg("--model")
+        .arg(model)
+        .arg("--workspace")
+        .arg(workspace)
+        .arg("--trust");
+    cmd
+}
+
 async fn run_cli_sync(model: &str, prompt: &str) -> Result<CliSyncResult, String> {
     let cfg = config();
     let agent_bin = cfg.agent_bin.to_string();
     let workspace = cfg.workspace.to_string();
     let timeout_ms = cfg.timeout_ms;
+    let use_ask_mode = cfg.use_ask_mode;
     let model = model.to_string();
     let prompt = prompt.to_string();
 
@@ -235,15 +255,7 @@ async fn run_cli_sync(model: &str, prompt: &str) -> Result<CliSyncResult, String
         std::time::Duration::from_millis(timeout_ms),
         tokio::task::spawn_blocking(move || {
             // Use stream-json format to capture thinking content
-            let child = Command::new(&agent_bin)
-                .arg("--print")
-                .arg("--mode")
-                .arg("ask")
-                .arg("--model")
-                .arg(&model)
-                .arg("--workspace")
-                .arg(&workspace)
-                .arg("--trust")
+            let child = build_agent_command(&agent_bin, &model, &workspace, use_ask_mode)
                 .arg("--stream-partial-output")
                 .arg("--output-format")
                 .arg("stream-json")
@@ -276,6 +288,10 @@ async fn run_cli_sync(model: &str, prompt: &str) -> Result<CliSyncResult, String
                     }
                     Some(StreamParseResult::ContentDelta(text)) => {
                         content_parts.push(text);
+                    }
+                    Some(StreamParseResult::FileContent { path, content }) => {
+                        // Agent wrote code to a file — include it in the response
+                        content_parts.push(format!("\n```\n// File: {path}\n{content}\n```\n"));
                     }
                     Some(StreamParseResult::Done(u)) => {
                         usage = u;
@@ -365,6 +381,37 @@ impl StreamParser {
                 Some(StreamParseResult::ThinkingDone)
             }
 
+            // === Tool call with file content ===
+            // When agent writes code to a file, capture the content
+            "tool_call" => {
+                // Look for editToolCall.args.streamContent or editToolCall.args.content
+                let tool_call = obj.get("tool_call")?;
+                let edit = tool_call.get("editToolCall")?;
+                let args = edit.get("args")?;
+
+                // streamContent is the file content being written
+                let content = args
+                    .get("streamContent")
+                    .or_else(|| args.get("content"))
+                    .and_then(|v| v.as_str())?;
+
+                if content.is_empty() {
+                    return None;
+                }
+
+                // Only emit on "completed" to avoid duplicates (started + completed both have content)
+                if subtype == Some("completed") {
+                    let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                    self.assistant_len += content.len();
+                    Some(StreamParseResult::FileContent {
+                        path: path.to_string(),
+                        content: content.to_string(),
+                    })
+                } else {
+                    None
+                }
+            }
+
             // === Assistant content delta ===
             "assistant" => {
                 let content = obj.get("message")?.get("content")?.as_array()?;
@@ -380,12 +427,8 @@ impl StreamParser {
                 }
 
                 // 最后一条 assistant 消息是完整累积文本，需要跳过
-                // 判断: 如果这条消息的长度 >= 之前所有 delta 的累积长度，它就是累积消息
                 if text.len() >= self.assistant_len && self.assistant_len > 0 {
-                    // 可能是累积消息。检查长度是否远大于单个 delta
-                    // CLI 的 delta 通常很短(几个词)，累积消息包含全部文本
                     if text.len() > 100 && text.len() as f64 > self.assistant_len as f64 * 0.8 {
-                        // 跳过累积消息
                         return None;
                     }
                 }
@@ -415,6 +458,8 @@ enum StreamParseResult {
     ThinkingDone,
     /// Assistant content delta
     ContentDelta(String),
+    /// File content from tool_call (agent wrote code to a file)
+    FileContent { path: String, content: String },
     /// Stream completed with usage info
     Done(CliUsageInfo),
 }
@@ -502,15 +547,7 @@ async fn handle_sync(model: &str, prompt: &str) -> Response<Body> {
 
 async fn handle_stream(model: &str, prompt: &str) -> Response<Body> {
     let cfg = config();
-    let mut child = match Command::new(cfg.agent_bin.as_ref())
-        .arg("--print")
-        .arg("--mode")
-        .arg("ask")
-        .arg("--model")
-        .arg(model)
-        .arg("--workspace")
-        .arg(cfg.workspace.as_ref())
-        .arg("--trust")
+    let mut child = match build_agent_command(cfg.agent_bin.as_ref(), model, cfg.workspace.as_ref(), cfg.use_ask_mode)
         .arg("--stream-partial-output")
         .arg("--output-format")
         .arg("stream-json")
@@ -621,6 +658,29 @@ async fn handle_stream(model: &str, prompt: &str) -> Response<Body> {
 
                 // Content delta → content field
                 Some(StreamParseResult::ContentDelta(text)) => {
+                    let chunk = CliStreamChunk {
+                        id: id.clone(),
+                        object: "chat.completion.chunk",
+                        created,
+                        model: model_owned.clone(),
+                        choices: vec![CliStreamChoice {
+                            index: 0,
+                            delta: CliStreamDelta {
+                                role: None,
+                                content: Some(text),
+                                reasoning_content: None,
+                            },
+                            finish_reason: None,
+                        }],
+                    };
+                    if !send(&tx, &chunk) {
+                        break;
+                    }
+                }
+
+                // File content from tool_call → emit as content
+                Some(StreamParseResult::FileContent { path, content }) => {
+                    let text = format!("\n```\n// File: {path}\n{content}\n```\n");
                     let chunk = CliStreamChunk {
                         id: id.clone(),
                         object: "chat.completion.chunk",
